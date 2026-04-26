@@ -13,6 +13,7 @@ class ScenarioRepo:
         sql = """
         INSERT INTO scenarios (decision_id, name, description, created_by)
         VALUES (:decision_id, :name, :description, :created_by)
+        ON CONFLICT (decision_id, name) DO UPDATE SET name = EXCLUDED.name
         RETURNING scenario_id::text AS scenario_id
         """
         with self.engine.begin() as conn:

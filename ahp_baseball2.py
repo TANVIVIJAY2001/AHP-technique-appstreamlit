@@ -124,7 +124,7 @@ S = st.session_state
 # ─────────────────────────────────────────────────────────────────────────────
 # DATABASE INTEGRATION — sidebar
 # ─────────────────────────────────────────────────────────────────────────────
-S.setdefault("db_enabled", False)
+S.setdefault("db_enabled", True)
 S.setdefault("db_decision_id", None)
 S.setdefault("db_scenario_id", None)
 S.setdefault("db_pref_set_id", None)
@@ -132,64 +132,56 @@ S.setdefault("db_last_run_id", None)
 
 with st.sidebar:
     st.markdown("### Database")
-    S["db_enabled"] = st.toggle("Enable DB Persistence", value=S["db_enabled"])
+    db_ok = ping_db()
+    st.write("Connection:", "✅ Connected" if db_ok else "❌ Failed")
+    if not db_ok:
+        st.warning("DATABASE_URL not set or unreachable. Add it to `.env`.")
+    else:
+        engine = get_engine()
+        decision_repo = DecisionRepo(engine)
+        scenario_repo = ScenarioRepo(engine)
 
-    if S["db_enabled"]:
-        db_ok = ping_db()
-        st.write("Connection:", "Connected" if db_ok else "Failed")
-        if not db_ok:
-            st.warning("DATABASE_URL not set or unreachable. Add it to `.env`.")
-        else:
-            engine = get_engine()
-            decision_repo = DecisionRepo(engine)
-            scenario_repo = ScenarioRepo(engine)
+        # ── Decision selector ────────────────────────────────────────────
+        decisions = decision_repo.list_decisions(limit=50)
 
-            # ── Decision selector ────────────────────────────────────────────
-            decisions = decision_repo.list_decisions(limit=50)
-            dec_options = ["Create new…"] + [d["decision_id"] for d in decisions]
+        with st.expander("➕ Create New Decision"):
+            dec_title = st.text_input(
+                "Decision title", value="",
+                placeholder="e.g. Baseball Player Evaluation",
+                key="db_dec_title",
+            )
+            if st.button("Create Decision", key="db_dec_btn"):
+                if dec_title.strip():
+                    S["db_decision_id"] = decision_repo.create_decision(dec_title.strip())
+                    S["db_scenario_id"] = scenario_repo.create_scenario(
+                        decision_id=S["db_decision_id"], name="Default"
+                    )
+                    st.success("Created!")
+                    st.rerun()
+                else:
+                    st.warning("Enter a title first.")
+
+        if decisions:
+            dec_options = [d["decision_id"] for d in decisions]
+            current_idx = dec_options.index(S["db_decision_id"]) if S.get("db_decision_id") in dec_options else 0
             sel_dec = st.selectbox(
-                "Decision",
+                "Select existing decision",
                 options=dec_options,
-                format_func=lambda x: "Create new…" if x == "Create new…" else next(
+                format_func=lambda x: next(
                     (dd["title"] for dd in decisions if dd["decision_id"] == x), x[:8]
                 ),
+                index=current_idx,
                 key="db_dec_sel",
             )
-            if sel_dec == "Create new…":
-                dec_title = st.text_input("Decision title", value="Baseball Player Evaluation", key="db_dec_title")
-                if st.button("Create Decision", key="db_dec_btn"):
-                    S["db_decision_id"] = decision_repo.create_decision(dec_title.strip())
-                    st.success(f"Created: {S['db_decision_id'][:12]}…")
-                    st.rerun()
-            else:
-                S["db_decision_id"] = sel_dec
-
-            # ── Scenario selector ────────────────────────────────────────────
-            if S["db_decision_id"]:
-                scenarios = scenario_repo.list_scenarios(S["db_decision_id"], limit=50)
-                scen_options = ["Create new…"] + [s["scenario_id"] for s in scenarios]
-                sel_scen = st.selectbox(
-                    "Scenario",
-                    options=scen_options,
-                    format_func=lambda x: "Create new…" if x == "Create new…" else next(
-                        (ss["name"] for ss in scenarios if ss["scenario_id"] == x), x[:8]
-                    ),
-                    key="db_scen_sel",
+            S["db_decision_id"] = sel_dec
+            if S["db_decision_id"] and not S.get("db_scenario_id"):
+                S["db_scenario_id"] = scenario_repo.create_scenario(
+                    decision_id=S["db_decision_id"], name="Default"
                 )
-                if sel_scen == "Create new…":
-                    scen_name = st.text_input("Scenario name", value="AHP Baseball", key="db_scen_name")
-                    if st.button("Create Scenario", key="db_scen_btn"):
-                        S["db_scenario_id"] = scenario_repo.create_scenario(
-                            decision_id=S["db_decision_id"], name=scen_name.strip(),
-                        )
-                        st.success(f"Created: {S['db_scenario_id'][:12]}…")
-                        st.rerun()
-                else:
-                    S["db_scenario_id"] = sel_scen
 
-            st.divider()
-            ready = bool(S.get("db_decision_id") and S.get("db_scenario_id"))
-            st.write("Ready to persist:", "Yes" if ready else "No — select decision + scenario")
+        st.divider()
+        ready = bool(S.get("db_decision_id") and S.get("db_scenario_id"))
+        st.write("Ready to persist:", "Yes" if ready else "No — select a decision first")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HEADER
@@ -710,7 +702,7 @@ with tab5:
     decision_id = S.get("db_decision_id")
 
     if not decision_id or not scenario_id:
-        st.warning("Select a **Decision** and **Scenario** in the sidebar first.")
+        st.warning("Select a **Decision** in the sidebar first.")
         st.stop()
 
     alt_repo   = AlternativeRepo(engine)
